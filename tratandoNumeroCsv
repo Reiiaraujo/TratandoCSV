@@ -1,28 +1,80 @@
+import argparse
+from pathlib import Path
+
 import pandas as pd
-from tqdm import tqdm
 
-# Leitura do arquivo CSV
-path = r'C:\Users\Reinaldo Araujo\Documents\sabesp\Base_Campanha_ 2024-03-08\base-utf8-converted.csv'
 
-# Lê o arquivo diretamente em UTF-8
-df = pd.read_csv(path, delimiter=';', encoding='utf-8')
+COLUNA_ORIGINAL = "NUM_CELULAR"
+COLUNA_ATUALIZADA = "NUM_CELULAR_ATUALIZADO"
 
-# Remove os números duplicados e salva em um novo arquivo
-numeros_duplicados = df[df.duplicated(subset=['NUM_CELULAR'])]
-numeros_duplicados.to_csv(r'C:\Users\Reinaldo Araujo\Documents\sabesp\Base_Campanha_ 2024-03-08\numeros_duplicados.csv', index=False)
 
-# Cria uma nova coluna para armazenar os números de celular atualizados
-df['NUM_CELULAR_ATUALIZADO'] = ''
+def atualizar_numeros(path_entrada: Path, path_saida: Path, path_duplicados: Path) -> None:
+    """Lê um CSV, registra números duplicados e gera saída com código de país (55)."""
+    df = pd.read_csv(path_entrada, delimiter=";", encoding="utf-8")
 
-# Adiciona +55 na frente dos números com tqdm
-progress_bar = tqdm(total=len(df))
-for index, row in df.iterrows():
-    numero_celular = '55' + str(row['NUM_CELULAR'])
-    df.at[index, 'NUM_CELULAR_ATUALIZADO'] = numero_celular
-    progress_bar.update(1)
+    if COLUNA_ORIGINAL not in df.columns:
+        raise ValueError(f"Coluna obrigatória ausente no CSV: {COLUNA_ORIGINAL}")
 
-# Remove as linhas duplicadas com base na coluna "NUM_CELULAR_ATUALIZADO"
-df = df.drop_duplicates(subset=['NUM_CELULAR_ATUALIZADO'])
+    # Salva os registros duplicados da coluna original para auditoria.
+    numeros_duplicados = df[df.duplicated(subset=[COLUNA_ORIGINAL], keep=False)]
+    numeros_duplicados.to_csv(path_duplicados, index=False, sep=";")
 
-# Salva o arquivo atualizado sem duplicatas
-df.to_csv(r'C:\Users\Reinaldo Araujo\Documents\sabesp\Base_Campanha_ 2024-03-08\base_atualizada_sem_duplicados.csv', index=False, sep=';')
+    # Normaliza para texto, remove caracteres não numéricos e acrescenta o DDI 55.
+    celular_limpo = (
+        df[COLUNA_ORIGINAL]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\D", "", regex=True)
+    )
+
+    df[COLUNA_ATUALIZADA] = "55" + celular_limpo
+
+    # Remove linhas com celular vazio/inválido após limpeza.
+    df = df[df[COLUNA_ATUALIZADA] != "55"]
+
+    # Remove linhas duplicadas após atualização.
+    df = df.drop_duplicates(subset=[COLUNA_ATUALIZADA])
+
+    # Salva o resultado final.
+    df.to_csv(path_saida, index=False, sep=";")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Atualiza números de celular com DDI 55 e remove duplicados."
+    )
+    parser.add_argument("entrada", type=Path, nargs="?", help="Caminho do CSV de entrada")
+    parser.add_argument("saida", type=Path, nargs="?", help="Caminho do CSV final")
+    parser.add_argument(
+        "duplicados",
+        type=Path,
+        nargs="?",
+        help="Caminho para salvar os registros duplicados detectados",
+    )
+    return parser.parse_args()
+
+
+def solicitar_caminhos(args: argparse.Namespace) -> tuple[Path, Path, Path]:
+    entrada = args.entrada
+    if entrada is None:
+        entrada = Path(input("Informe o caminho do arquivo CSV de entrada: ").strip())
+
+    saida = args.saida
+    if saida is None:
+        saida = Path(input("Informe o caminho onde deseja salvar o CSV final: ").strip())
+
+    duplicados = args.duplicados
+    if duplicados is None:
+        duplicados = saida.with_name(f"{saida.stem}_duplicados.csv")
+
+    return entrada, saida, duplicados
+
+
+def main() -> None:
+    args = parse_args()
+    entrada, saida, duplicados = solicitar_caminhos(args)
+    atualizar_numeros(entrada, saida, duplicados)
+
+
+if __name__ == "__main__":
+    main()
